@@ -260,7 +260,7 @@ class AccountsFileTests(unittest.TestCase):
 class ManifestAndHelpTests(unittest.TestCase):
     def test_manifest_widget_settings(self) -> None:
         data = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(data["version"], "2.6.0")
+        self.assertEqual(data["version"], "2.7.0")
         for name in ("Gmail", "Outlook", "Fastmail", "IMAP", "HEY"):
             self.assertIn(name, data["description"])
             self.assertIn(name, data["barWidget"]["description"])

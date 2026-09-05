@@ -234,5 +234,34 @@ class ReadAllTests(unittest.TestCase):
         self.assertEqual(payload["error"], "a: timed out")
 
 
+class PreviewTests(unittest.TestCase):
+    def test_gmail_preview_routes_read_only_command_and_keeps_opaque_id(self) -> None:
+        accounts = [_account("gmail", "gmail", "Gmail")]
+        opaque = "gmail:bXNnLTE"
+
+        def run(acc: dict, args: list[str], timeout: int = 45) -> dict:
+            self.assertEqual(args, ["preview", "msg-1"])
+            self.assertEqual(timeout, orchestrate.PREVIEW_TIMEOUT)
+            return {"ok": True, "contentPath": "/tmp/preview.html", "unread": True}
+
+        with patch.object(orchestrate, "load_accounts", return_value=accounts), patch.object(
+            orchestrate, "_run_provider", side_effect=run
+        ):
+            payload = capture_json(orchestrate.cmd_preview, opaque)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["unread"])
+        self.assertEqual(payload["id"], opaque)
+
+    def test_non_gmail_preview_does_not_call_provider(self) -> None:
+        accounts = [_account("work", "outlook", "Work")]
+        with patch.object(orchestrate, "load_accounts", return_value=accounts), patch.object(
+            orchestrate, "_run_provider"
+        ) as run:
+            payload = capture_json(orchestrate.cmd_preview, "work:bXNnLTE")
+        self.assertFalse(payload["ok"])
+        self.assertIn("currently available for Gmail", payload["error"])
+        run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

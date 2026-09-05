@@ -22,6 +22,7 @@ from common import (
 
 LIST_TIMEOUT = 45
 READ_ALL_TIMEOUT = 120
+PREVIEW_TIMEOUT = 45
 
 
 def _run_provider(account: dict, args: list[str], timeout: int = LIST_TIMEOUT) -> dict:
@@ -67,6 +68,7 @@ def _tag_messages(account: dict, payload: dict) -> list[dict]:
         item = dict(msg)
         item["id"] = encode_id(account["id"], str(msg["id"]))
         item["account"] = label
+        item["previewAvailable"] = account.get("provider") == "gmail"
         tagged.append(item)
     return tagged
 
@@ -165,6 +167,21 @@ def cmd_read(opaque: str) -> None:
     if not payload.get("ok"):
         die(str(payload.get("error") or "could not mark as read"))
     emit({"ok": True})
+
+
+def cmd_preview(opaque: str) -> None:
+    account_id, local_id = decode_id(opaque)
+    accounts = {a["id"]: a for a in load_accounts()}
+    acc = accounts.get(account_id)
+    if not acc:
+        die("unknown account")
+    if acc.get("provider") != "gmail":
+        die("in-panel preview is currently available for Gmail")
+    payload = _run_provider(acc, ["preview", local_id], timeout=PREVIEW_TIMEOUT)
+    if not payload.get("ok"):
+        die(str(payload.get("error") or "could not load message"))
+    payload["id"] = opaque
+    emit(payload)
 
 
 def cmd_read_all() -> None:

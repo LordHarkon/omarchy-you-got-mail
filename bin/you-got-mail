@@ -3,6 +3,7 @@
 #
 # The panel calls:
 #   you-got-mail list [--page OFFSET] [--limit N]
+#   you-got-mail preview <id>
 #   you-got-mail read <id>
 #   you-got-mail read-all
 #

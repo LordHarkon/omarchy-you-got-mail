@@ -1,11 +1,12 @@
 import QtQuick
 import QtQuick.Controls
+import QtWebEngine
 import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// You've Got Mail: unread only. Click a row to open that message.
+// You've Got Mail: unread only. Click a Gmail row to preview it in place.
 //
 // Data comes from `bin/you-got-mail`. The script talks to a provider; this
 // file only draws the pile and opens the URL the provider already built.
@@ -27,6 +28,8 @@ Panel {
   readonly property string iconConfirm: "\uF00C"
   readonly property string iconPrev: "\uF053"
   readonly property string iconNext: "\uF054"
+  readonly property string iconBack: "\uF060"
+  readonly property string iconImages: "\uF03E"
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color accent: Color.accent
@@ -47,6 +50,15 @@ Panel {
   property bool markAllBusy: false
   property string actionWarning: ""
   property int cursor: -1
+
+  property bool detailOpen: false
+  property bool detailBusy: false
+  property var detailMessage: null
+  property string detailError: ""
+  property string detailContentUrl: "about:blank"
+  property string previewRequestedId: ""
+  property bool remoteContentAllowed: false
+  property int detailReloadSerial: 0
 
   property string pageToken: ""
   property var pageStack: []
@@ -79,6 +91,13 @@ Panel {
 
   function validUrl(url) {
     return /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?(?:[/?#][^\s]*)?$/.test(String(url))
+  }
+
+  function contentFileUrl(path) {
+    var value = String(path || "")
+    if (!/^\/[A-Za-z0-9_./-]+$/.test(value) || value.indexOf("/../") >= 0)
+      return "about:blank"
+    return "file://" + encodeURI(value) + "?preview=" + Date.now()
   }
 
   function openBrowser(url) {
@@ -192,7 +211,7 @@ Panel {
     readProc.running = true
   }
 
-  function openMessage(message) {
+  function openMessageInBrowser(message) {
     if (root.markAllBusy) return
     if (!message || !validId(message.id)) return
     var url = message.url || ""
@@ -202,6 +221,67 @@ Panel {
     dismissLocal(message.id)
     enqueueRead(message.id)
     close()
+  }
+
+  function previewMessage(message) {
+    if (root.markAllBusy || previewProc.running) return
+    if (!message || !validId(message.id)) return
+    if (message.previewAvailable === false) {
+      openMessageInBrowser(message)
+      return
+    }
+    cancelMarkAllConfirm()
+    root.detailOpen = true
+    root.detailBusy = true
+    root.detailMessage = Object.assign({}, message)
+    root.detailError = ""
+    root.detailContentUrl = "about:blank"
+    root.remoteContentAllowed = false
+    root.detailReloadSerial = 0
+    root.previewRequestedId = message.id
+    previewProc.command = [root.script, "preview", message.id]
+    previewProc.running = true
+  }
+
+  function closeDetail() {
+    root.detailOpen = false
+    root.detailBusy = false
+    root.detailMessage = null
+    root.detailError = ""
+    root.detailContentUrl = "about:blank"
+    root.previewRequestedId = ""
+    root.remoteContentAllowed = false
+    root.detailReloadSerial = 0
+  }
+
+  function applyPreviewPayload(text) {
+    if (!root.detailOpen) return
+    root.detailBusy = false
+    try {
+      var data = JSON.parse(text)
+      if (data.ok !== true) {
+        root.detailError = data.error || "could not load message"
+        return
+      }
+      if (data.id !== root.previewRequestedId) return
+      root.detailMessage = Object.assign({}, root.detailMessage || {}, data)
+      root.detailContentUrl = root.contentFileUrl(data.contentPath)
+    } catch (e) {
+      root.detailError = "unexpected output from you-got-mail"
+    }
+  }
+
+  function markDetailRead() {
+    if (!root.detailMessage || !validId(root.detailMessage.id)) return
+    var id = root.detailMessage.id
+    dismissLocal(id)
+    enqueueRead(id)
+    closeDetail()
+  }
+
+  function toggleRemoteContent() {
+    root.remoteContentAllowed = !root.remoteContentAllowed
+    root.detailReloadSerial += 1
   }
 
   function markCursorRead() {
@@ -275,7 +355,7 @@ Panel {
 
   function activateCursor() {
     if (cursor < 0 || cursor >= messages.length) return
-    openMessage(messages[cursor])
+    previewMessage(messages[cursor])
   }
 
   function ageLabel(ts) {
@@ -329,6 +409,7 @@ Panel {
       refresh()
     } else {
       cursor = -1
+      closeDetail()
       firstPage()
       cancelMarkAllConfirm()
       actionWarning = ""
@@ -354,6 +435,13 @@ Panel {
         return
       }
       root.refresh()
+    }
+  }
+
+  Process {
+    id: previewProc
+    stdout: StdioCollector {
+      onStreamFinished: root.applyPreviewPayload(text)
     }
   }
 
@@ -448,26 +536,51 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(400))
+    contentWidth: panel.fittedContentWidth(root.detailOpen ? Style.space(720) : Style.space(400))
     contentHeight: panel.fittedContentHeight(content.implicitHeight)
+
+    Behavior on contentWidth {
+      NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+    }
+
+    Behavior on contentHeight {
+      NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+    }
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       onCloseRequested: {
+        if (root.detailOpen) {
+          root.closeDetail()
+          return
+        }
         if (root.markAllArmed) {
           root.cancelMarkAllConfirm()
           return
         }
         root.close()
       }
-      onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy) }
-      onActivateRequested: root.activateCursor()
+      onMoveRequested: function(dx, dy) {
+        if (!root.detailOpen && dy !== 0) root.moveCursor(dy)
+      }
+      onActivateRequested: if (!root.detailOpen) root.activateCursor()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
+        if (root.detailOpen) {
+          if (t === "a")
+            root.markDetailRead()
+          else if (t === "o" && root.detailMessage)
+            root.openMessageInBrowser(root.detailMessage)
+          else if (t === "b")
+            root.closeDetail()
+          else if (t === "r" && root.detailMessage && root.detailMessage.hasRemoteContent)
+            root.toggleRemoteContent()
+          return
+        }
         var onCursor = root.cursor >= 0 && root.cursor < root.messages.length
         if (t === "o" && onCursor)
-          root.openMessage(root.messages[root.cursor])
+          root.openMessageInBrowser(root.messages[root.cursor])
         else if (t === "i" && root.hasOpenableInbox)
           root.openSearch()
         else if (t === "a")
@@ -480,10 +593,16 @@ Panel {
           root.goPrevPage()
       }
 
-      Column {
+      Item {
         id: content
         anchors.fill: parent
-        spacing: Style.space(6)
+        implicitHeight: root.detailOpen ? detailPane.implicitHeight : inboxPane.implicitHeight
+
+        Column {
+          id: inboxPane
+          width: parent.width
+          visible: !root.detailOpen
+          spacing: Style.space(6)
 
         Item {
           width: parent.width
@@ -687,7 +806,7 @@ Panel {
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
               onContainsMouseChanged: if (containsMouse) root.cursor = row.index
-              onClicked: if (!root.markAllBusy) root.openMessage(row.modelData)
+              onClicked: if (!root.markAllBusy) root.previewMessage(row.modelData)
             }
 
             Column {
@@ -883,6 +1002,189 @@ Panel {
             font.pixelSize: Style.font.body
             color: root.foreground
             opacity: 0.6
+          }
+        }
+        }
+
+        Column {
+          id: detailPane
+          width: parent.width
+          visible: root.detailOpen
+          spacing: Style.space(6)
+
+          Item {
+            width: parent.width
+            height: Math.max(detailHeading.implicitHeight, detailActions.height)
+
+            PanelActionButton {
+              id: backButton
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: root.iconBack
+              tooltipText: "Back to unread mail (b or Esc)"
+              foreground: root.foreground
+              hoverColor: root.accent
+              fontFamily: root.fontFamily
+              fontSize: Style.font.iconSmall
+              onClicked: root.closeDetail()
+            }
+
+            Column {
+              id: detailHeading
+              anchors.left: backButton.right
+              anchors.leftMargin: Style.space(8)
+              anchors.right: detailActions.left
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
+
+              PanelSectionHeader {
+                width: parent.width
+                text: root.detailMessage ? root.detailMessage.subject || "(no subject)" : "Loading message…"
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Text {
+                width: parent.width
+                text: root.detailMessage ? root.detailMessage.from || "" : ""
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                color: Qt.darker(root.foreground, 1.2)
+              }
+
+              Text {
+                width: parent.width
+                text: {
+                  if (!root.detailMessage) return ""
+                  var pieces = []
+                  if (root.detailMessage.to) pieces.push("to " + root.detailMessage.to)
+                  if (root.detailMessage.date) pieces.push(root.detailMessage.date)
+                  var files = root.detailMessage.attachments || []
+                  if (files.length > 0)
+                    pieces.push(files.length === 1 ? "1 attachment" : files.length + " attachments")
+                  return pieces.join("  ·  ")
+                }
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                color: Qt.darker(root.foreground, 1.7)
+              }
+            }
+
+            Row {
+              id: detailActions
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
+
+              PanelActionButton {
+                visible: root.detailMessage && root.detailMessage.hasRemoteContent === true
+                iconText: root.iconImages
+                tooltipText: root.remoteContentAllowed
+                  ? "Block remote images (r)"
+                  : "Load remote images (r)"
+                foreground: root.remoteContentAllowed ? root.accent : root.foreground
+                hoverColor: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.iconSmall
+                onClicked: root.toggleRemoteContent()
+              }
+
+              PanelActionButton {
+                visible: root.detailMessage !== null
+                enabled: !root.detailBusy
+                iconText: root.iconMarkAll
+                tooltipText: "Mark this message as read (a)"
+                foreground: root.foreground
+                hoverColor: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.iconSmall
+                onClicked: root.markDetailRead()
+              }
+
+              PanelActionButton {
+                visible: root.detailMessage && root.detailMessage.url
+                enabled: !root.detailBusy
+                iconText: root.iconExternal
+                tooltipText: "Open in Gmail (o)"
+                foreground: root.foreground
+                hoverColor: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.iconSmall
+                onClicked: root.openMessageInBrowser(root.detailMessage)
+              }
+            }
+          }
+
+          PanelSeparator { width: parent.width }
+
+          Rectangle {
+            id: previewFrame
+            width: parent.width
+            height: Math.max(Style.space(300),
+                             panel.availableCardHeight - panel.verticalContentInset
+                             - detailHeading.implicitHeight - Style.space(62))
+            radius: Style.cornerRadius
+            color: "#ffffff"
+            clip: true
+
+            Loader {
+              id: previewLoader
+              anchors.fill: parent
+              active: root.detailOpen && !root.detailBusy
+                      && root.detailError === ""
+                      && root.detailContentUrl !== "about:blank"
+
+              sourceComponent: Component {
+                WebEngineView {
+                  url: root.detailContentUrl + "&reload=" + root.detailReloadSerial
+                  backgroundColor: "#ffffff"
+                  audioMuted: true
+                  activeFocusOnPress: false
+                  settings.autoLoadImages: true
+                  settings.javascriptEnabled: false
+                  settings.javascriptCanOpenWindows: false
+                  settings.javascriptCanAccessClipboard: false
+                  settings.localStorageEnabled: false
+                  settings.localContentCanAccessRemoteUrls: root.remoteContentAllowed
+                  settings.localContentCanAccessFileUrls: false
+                  settings.hyperlinkAuditingEnabled: false
+                  settings.pluginsEnabled: false
+                  settings.fullScreenSupportEnabled: false
+                  settings.screenCaptureEnabled: false
+                  settings.webGLEnabled: false
+                  settings.accelerated2dCanvasEnabled: false
+                  settings.playbackRequiresUserGesture: true
+
+                  onNavigationRequested: function(request) {
+                    if (request.navigationType === WebEngineNavigationRequest.LinkClickedNavigation) {
+                      request.reject()
+                      root.openBrowser(String(request.url))
+                    }
+                  }
+                }
+              }
+            }
+
+            Text {
+              anchors.centerIn: parent
+              width: parent.width - Style.space(40)
+              visible: root.detailBusy || root.detailError !== ""
+              text: root.detailBusy ? "Loading the full message…" : root.detailError
+              textFormat: Text.PlainText
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              color: root.detailError !== "" ? "#a51d2d" : "#444444"
+            }
           }
         }
       }

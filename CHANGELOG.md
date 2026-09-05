@@ -2,6 +2,20 @@
 
 Versions match `manifest.json`. Git tags are created at release time.
 
+## 2.7.0
+
+Gmail messages can now be read inside the panel without changing their unread
+state.
+
+- Clicking a Gmail row fetches the RFC 822 message with the read-only Gmail
+  `messages.get` endpoint and morphs the panel into a larger detail view.
+- HTML, plain text, tables, and inline CID images render through a locked-down
+  Qt WebEngine view. Scripts and active content are stripped; remote resources
+  are opt-in.
+- Back, mark-read, open-in-Gmail, and load-images actions have mouse and
+  keyboard controls. Other providers retain their browser behavior.
+- `you-got-mail preview <id>` exposes the same unread-safe provider contract.
+
 ## 2.6.0
 
 Expired mail logins are a warning, not a dead widget, and the panel

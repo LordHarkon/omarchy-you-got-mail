@@ -431,6 +431,16 @@ class GmailScriptTests(unittest.TestCase):
         self.assertIn("fail_read_all", script)
         self.assertNotIn("users messages modify", script.split("cmd_read_all()")[1].split("case ")[0])
 
+    def test_preview_fetches_raw_without_modifying_unread(self) -> None:
+        from support import ROOT
+
+        script = (ROOT / "providers" / "gmail").read_text(encoding="utf-8")
+        preview = script.split("cmd_preview() {")[1].split("fail_read_all()", 1)[0]
+        self.assertIn("users messages get", preview)
+        self.assertIn('format:"raw"', preview)
+        self.assertIn("gmail_preview.py", preview)
+        self.assertNotIn("users messages modify", preview)
+
 
 class OutlookUnreadTests(unittest.TestCase):
     @classmethod

@@ -5,6 +5,7 @@
 # included because they are just unread mail that is not in INBOX.
 #
 #   gmail list [--page TOKEN]
+#   gmail preview <id>
 #   gmail read <id>
 #   gmail read-all
 #
@@ -34,6 +35,8 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-you-got-mail/${ACCOUNT_ID}"
 CACHE_FILE="$CACHE_DIR/messages.json"
 PROFILE_FILE="$CACHE_DIR/profile.json"
 LABEL_FILE="$CACHE_DIR/labels.json"
+PREVIEW_FILE="$CACHE_DIR/preview.html"
+PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 die() {
   printf '{"ok":false,"error":%s}\n' "$(printf '%s' "$1" | jq -Rs .)"
@@ -355,6 +358,33 @@ cmd_read() {
   printf '{"ok":true}\n'
 }
 
+cmd_preview() {
+  local id="${1:-}" payload rendered email thread url err
+  valid_id "$id" || die "not a message id"
+
+  # Gmail messages.get is read-only: unlike messages.modify below, fetching
+  # format=raw does not remove the UNREAD label.
+  payload="$(gws_list users messages get --params "$(
+    jq -nc --arg id "$id" '{userId:"me",id:$id,format:"raw"}'
+  )")"
+  if ! printf '%s' "$payload" | jq -e 'type == "object" and (.raw | type == "string")' >/dev/null 2>&1; then
+    err="$(printf '%s' "$payload" | jq -r '.error // .error.message // "could not load message"' 2>/dev/null)"
+    gmail_error "${err:-could not load message}"
+  fi
+
+  rendered="$(printf '%s' "$payload" | python3 "$PLUGIN_ROOT/lib/gmail_preview.py" "$PREVIEW_FILE")"
+  if ! printf '%s' "$rendered" | jq -e 'type == "object" and .ok == true' >/dev/null 2>&1; then
+    err="$(printf '%s' "$rendered" | jq -r '.error // "could not render message"' 2>/dev/null)"
+    die "${err:-could not render message}"
+  fi
+
+  email="$(account_email)" || email=""
+  thread="$(printf '%s' "$payload" | jq -r '.threadId // .id // empty' 2>/dev/null)"
+  valid_id "$thread" || thread="$id"
+  url="$(message_url "$email" "$thread")"
+  jq -nc --argjson detail "$rendered" --arg url "$url" '$detail + {url:$url}'
+}
+
 fail_read_all() {
   printf '{"ok":false,"marked":%s,"error":%s}\n' "$1" "$(printf '%s' "$2" | jq -Rs .)"
   exit 0
@@ -403,6 +433,7 @@ cmd_read_all() {
 
 case "${1:-list}" in
   list) shift; cmd_list "$@" ;;
+  preview) cmd_preview "${2:-}" ;;
   read) cmd_read "${2:-}" ;;
   read-all) cmd_read_all ;;
   *)    die "unknown command" ;;

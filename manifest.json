@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "bvisagie.you-got-mail",
   "name": "You've Got Mail",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "author": "BVisagie",
-  "description": "Unread-only mailbox for Gmail, Outlook, Fastmail, IMAP, and HEY. One pile across accounts; click a row to open it.",
+  "description": "Unread-only mailbox for Gmail, Outlook, Fastmail, IMAP, and HEY, with an unread-safe full Gmail preview.",
   "homepage": "https://github.com/BVisagie/omarchy-you-got-mail",
   "license": "MIT",
   "kinds": [
@@ -15,7 +15,7 @@
   },
   "barWidget": {
     "displayName": "You've Got Mail",
-    "description": "A mailbox whose flag raises for unread mail from Gmail, Outlook, Fastmail, IMAP, and HEY. Click a row to open it.",
+    "description": "Unread mail from Gmail, Outlook, Fastmail, IMAP, and HEY, with an unread-safe full Gmail preview in the panel.",
     "category": "Apps",
     "allowMultiple": false,
     "defaultSection": "right",

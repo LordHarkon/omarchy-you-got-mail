@@ -1,8 +1,8 @@
 # You've Got Mail
 
 An Omarchy bar widget for **unread mail only**. One pile, across every
-account you add. Click a row to open that message in the browser. Read
-mail is never listed.
+account you add. Click a Gmail row to morph the panel into a full message
+preview without marking it read. Read mail is never listed.
 
 Gmail, Outlook, Fastmail, generic IMAP, and HEY are built in. Adding
 another provider is documented in [docs/PROVIDERS.md](docs/PROVIDERS.md).
@@ -27,6 +27,7 @@ Sample mail only — not a real inbox.
 
 - [Omarchy](https://omarchy.org/) 4.0 or later (plugin `schemaVersion` 1)
 - `python3` (and `jq` for the Gmail provider)
+- Qt WebEngine (included with Omarchy) for full HTML message previews
 - **Gmail:** [Google Workspace CLI][gws] — `gws auth setup` (or a Desktop
   OAuth client JSON), then
   `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file gws auth login -s gmail`.
@@ -107,12 +108,22 @@ If you never add an account, a single Gmail account is assumed. The first
 | Header envelope-open or `A` | mark all unread as read (click or press twice to confirm) |
 | `a` | mark the message under the cursor as read, without opening it |
 | Header external-link or `i` | same as right-click |
-| Click a message | open **that** thread in the browser and take it off the pile |
+| Click a Gmail message | preview the complete message in the panel; it stays unread |
 | `↑` `↓` or `j` `k` | move through the list |
-| `Enter`, `Space` or `o` | open the message under the cursor |
+| `Enter` or `Space` | preview the message under the cursor |
+| `o` | open the message under the cursor in the browser and mark it read |
 | `n` / `p` | next page, previous page |
 | `Tab` / `Shift+Tab` | switch to the next or previous bar panel |
 | `Esc` | cancel mark-all confirm, or close |
+
+Inside a Gmail preview, `Esc` or `b` morphs back to the unread pile, `a`
+marks only that message read, and `o` opens it in Gmail. HTML mail, plain
+text, tables, and inline images are rendered in place. JavaScript and active
+content are stripped. Remote images stay blocked until you click the image
+button or press `r`, avoiding automatic tracking-pixel requests.
+
+In-panel preview is currently Gmail-only. Rows from the other built-in
+providers keep the original open-in-browser behavior.
 
 The bar tooltip shows the unread count, or why mail is unreachable.
 
