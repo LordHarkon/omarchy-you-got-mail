@@ -2,6 +2,14 @@
 
 Versions match `manifest.json`. Git tags are created at release time.
 
+## 2.7.1
+
+- Gmail previews are cropped to the message's visible height instead of being
+  placed on a fixed paper-sized page. The panel now hugs short messages and
+  scrolls inside the available screen height for long ones.
+- The browser-rendered preview stays inert and unread-safe; only its display
+  format changed from PDF to PNG.
+
 ## 2.7.0
 
 Gmail messages can now be read inside the panel without changing their unread

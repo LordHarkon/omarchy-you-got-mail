@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Pdf
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -1153,9 +1152,17 @@ Panel {
           Rectangle {
             id: previewFrame
             width: parent.width
-            height: Math.max(Style.space(300),
-                             panel.availableCardHeight - panel.verticalContentInset
-                             - detailHeading.implicitHeight - Style.space(62))
+            readonly property int heightCap: Math.max(
+              Style.space(180),
+              panel.availableCardHeight - panel.verticalContentInset
+                - detailHeading.implicitHeight - Style.space(62))
+            readonly property real fittedImageHeight: {
+              var imageWidth = root.detailMessage ? Number(root.detailMessage.previewWidth) : 0
+              var imageHeight = root.detailMessage ? Number(root.detailMessage.previewHeight) : 0
+              if (!(imageWidth > 0) || !(imageHeight > 0)) return Style.space(180)
+              return width * imageHeight / imageWidth
+            }
+            height: Math.min(heightCap, Math.max(Style.space(80), fittedImageHeight))
             radius: Style.cornerRadius
             color: "#ffffff"
             clip: true
@@ -1168,25 +1175,26 @@ Panel {
                       && root.detailContentUrl !== "about:blank"
 
               sourceComponent: Component {
-                Item {
-                  PdfDocument {
-                    id: previewDocument
+                Flickable {
+                  id: previewFlickable
+                  anchors.fill: parent
+                  clip: true
+                  boundsBehavior: Flickable.StopAtBounds
+                  flickableDirection: Flickable.VerticalFlick
+                  contentWidth: width
+                  contentHeight: previewImage.height
+                  interactive: contentHeight > height
+                  ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                  Image {
+                    id: previewImage
+                    width: previewFlickable.width
+                    height: previewFrame.fittedImageHeight
                     source: root.detailContentUrl
-                  }
-
-                  PdfMultiPageView {
-                    id: pdfView
-                    anchors.fill: parent
-                    clip: true
-                    document: previewDocument
-
-                    function fitWidth() {
-                      if (width > 0 && height > 0)
-                        scaleToWidth(width - Style.space(12), height)
-                    }
-
-                    Component.onCompleted: Qt.callLater(fitWidth)
-                    onWidthChanged: Qt.callLater(fitWidth)
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: true
+                    cache: false
+                    smooth: true
                   }
                 }
               }

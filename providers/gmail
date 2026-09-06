@@ -35,7 +35,7 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-you-got-mail/${ACCOUNT_ID}"
 CACHE_FILE="$CACHE_DIR/messages.json"
 PROFILE_FILE="$CACHE_DIR/profile.json"
 LABEL_FILE="$CACHE_DIR/labels.json"
-PREVIEW_FILE="$CACHE_DIR/preview.pdf"
+PREVIEW_FILE="$CACHE_DIR/preview.png"
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 die() {

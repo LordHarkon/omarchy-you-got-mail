@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import base64
+import struct
 import tempfile
 import unittest
 from email.message import EmailMessage
 from pathlib import Path
 
-from gmail_preview import render_payload, sanitize
+from gmail_preview import png_dimensions, render_payload, sanitize
 
 
 def gmail_payload(message: EmailMessage, *, unread: bool = True) -> dict:
@@ -20,6 +21,17 @@ def gmail_payload(message: EmailMessage, *, unread: bool = True) -> dict:
 
 
 class GmailPreviewTests(unittest.TestCase):
+    def test_png_dimensions_reads_ihdr_without_image_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "preview.png"
+            image.write_bytes(
+                b"\x89PNG\r\n\x1a\n"
+                + struct.pack(">I", 13)
+                + b"IHDR"
+                + struct.pack(">II", 720, 413)
+            )
+            self.assertEqual(png_dimensions(image), (720, 413))
+
     def test_html_preview_keeps_layout_and_inlines_cid_image(self) -> None:
         message = EmailMessage()
         message["Subject"] = "A full message"

@@ -2,7 +2,8 @@
 """Turn a Gmail API ``format=raw`` response into a safe local preview.
 
 Active content is stripped, then a sandboxed headless browser outside the shell
-renders the document to PDF. Quickshell only displays that inert PDF.
+renders the document to an inert image. The image is cropped vertically so the
+panel follows the message instead of displaying a mostly empty paper-sized page.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -251,7 +253,7 @@ def render_payload(payload: dict, destination: Path, *, allow_remote: bool = Fal
   :root { color-scheme: light; }
   html, body { margin: 0; padding: 0; background: #fff; color: #161616; }
   body { font: 15px/1.48 system-ui, sans-serif; overflow-wrap: anywhere; }
-  .mail-document { padding: 18px 20px 28px; min-height: 100vh; box-sizing: border-box; }
+  .mail-document { padding: 18px 20px 28px; box-sizing: border-box; }
   .plain { white-space: pre-wrap; font: 14px/1.55 ui-monospace, monospace; }
   img { max-width: 100%; height: auto; }
   table { max-width: 100%; }
@@ -271,15 +273,32 @@ def render_payload(payload: dict, destination: Path, *, allow_remote: bool = Fal
     }
 
 
-def render_pdf(source: Path, destination: Path) -> None:
+def png_dimensions(path: Path) -> tuple[int, int]:
+    with path.open("rb") as handle:
+        header = handle.read(24)
+    if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
+        raise ValueError("message renderer produced an invalid preview")
+    width, height = struct.unpack(">II", header[16:24])
+    if width < 1 or height < 1:
+        raise ValueError("message renderer produced an invalid preview")
+    return width, height
+
+
+def render_image(source: Path, destination: Path) -> tuple[int, int]:
     browser = shutil.which("chromium") or shutil.which("brave") or shutil.which("brave-browser")
     if not browser:
         raise ValueError("Chromium or Brave is required for full message previews")
+    magick = shutil.which("magick")
+    if not magick:
+        raise ValueError("ImageMagick is required for fitted message previews")
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="render-", dir=destination.parent) as tmp:
         tmpdir = Path(tmp)
-        output = tmpdir / "message.pdf"
+        raw = tmpdir / "message-full.png"
+        output = tmpdir / "message.png"
         profile = tmpdir / "profile"
+        viewport_width = 720
+        viewport_height = 20000
         command = [
             browser,
             "--headless=new",
@@ -291,9 +310,12 @@ def render_pdf(source: Path, destination: Path) -> None:
             "--disable-sync",
             "--metrics-recording-only",
             "--no-first-run",
-            "--no-pdf-header-footer",
+            "--hide-scrollbars",
+            "--run-all-compositor-stages-before-draw",
+            "--virtual-time-budget=3000",
             f"--user-data-dir={profile}",
-            f"--print-to-pdf={output}",
+            f"--window-size={viewport_width},{viewport_height}",
+            f"--screenshot={raw}",
             source.resolve().as_uri(),
         ]
         try:
@@ -307,11 +329,59 @@ def render_pdf(source: Path, destination: Path) -> None:
             )
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             raise ValueError("could not render the message preview") from exc
+        if not raw.is_file() or raw.stat().st_size == 0:
+            raise ValueError("message renderer produced no preview")
+
+        # Keep the browser's full width so newsletter layouts retain their
+        # intended scale. Only remove blank space above and below the visible
+        # message, with a small breathing margin at either end.
+        try:
+            bounds = subprocess.run(
+                [magick, str(raw), "-fuzz", "2%", "-format", "%@", "info:"],
+                check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=15,
+            ).stdout.strip()
+            match = re.fullmatch(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", bounds)
+            if not match:
+                raise ValueError("could not measure the rendered message")
+            content_height = int(match.group(2))
+            content_y = max(0, int(match.group(4)))
+            margin = 16
+            if content_height == 0:
+                crop_y = 0
+                crop_height = 80
+            else:
+                crop_y = max(0, content_y - margin)
+                crop_bottom = min(viewport_height, content_y + content_height + margin)
+                crop_height = max(80, crop_bottom - crop_y)
+            subprocess.run(
+                [
+                    magick,
+                    str(raw),
+                    "-crop",
+                    f"{viewport_width}x{crop_height}+0+{crop_y}",
+                    "+repage",
+                    str(output),
+                ],
+                check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise ValueError("could not fit the message preview") from exc
         if not output.is_file() or output.stat().st_size == 0:
             raise ValueError("message renderer produced no preview")
+        dimensions = png_dimensions(output)
         os.chmod(output, 0o600)
         os.replace(output, destination)
         os.chmod(destination, 0o600)
+        return dimensions
 
 
 def main() -> None:
@@ -325,9 +395,11 @@ def main() -> None:
             raise ValueError("Gmail returned an invalid message")
         html_path = args.destination.with_suffix(".html")
         result = render_payload(payload, html_path, allow_remote=args.remote)
-        render_pdf(html_path, args.destination)
+        width, height = render_image(html_path, args.destination)
         result["contentPath"] = str(args.destination)
-        result["contentType"] = "application/pdf"
+        result["contentType"] = "image/png"
+        result["previewWidth"] = width
+        result["previewHeight"] = height
     except Exception as exc:
         result = {"ok": False, "error": one_line(str(exc) or "could not render message")}
     json.dump(result, sys.stdout, ensure_ascii=False)

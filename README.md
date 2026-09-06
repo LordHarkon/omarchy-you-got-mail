@@ -27,8 +27,7 @@ Sample mail only — not a real inbox.
 
 - [Omarchy](https://omarchy.org/) 4.0 or later (plugin `schemaVersion` 1)
 - `python3` (and `jq` for the Gmail provider)
-- Chromium or Brave for isolated HTML-to-PDF rendering, plus Qt PDF (included
-  with Omarchy) for the in-panel document view
+- Chromium or Brave plus ImageMagick for isolated, content-fitted email images
 - **Gmail:** [Google Workspace CLI][gws] — `gws auth setup` (or a Desktop
   OAuth client JSON), then
   `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file gws auth login -s gmail`.
