@@ -119,6 +119,7 @@ class PanelContractTests(unittest.TestCase):
         self.assertIn("ScrollBar.horizontal", self.qml)
         self.assertIn("function retryDetail()", self.qml)
         self.assertIn("previewRetriesRemaining", self.qml)
+        self.assertIn("Remote images are blocked · Load images", self.qml)
         self.assertNotIn("PdfDocument", self.qml)
         self.assertNotIn("WebEngineView", self.qml)
         self.assertIn('argv.push("--remote")', self.qml)

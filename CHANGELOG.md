@@ -9,7 +9,8 @@ Versions match `manifest.json`. Git tags are created at release time.
 - Preview rendering retries transient browser failures up to three times. The
   panel also retries failed requests/image decodes and offers click-to-retry.
 - Opted-in remote images load eagerly, including `<picture>/<source>` and
-  protocol-relative image URLs, before the inert preview is captured.
+  protocol-relative image URLs, before the inert preview is captured. A clear
+  in-panel control replaces the easy-to-miss icon-only prompt.
 
 ## 2.7.1
 

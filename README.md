@@ -123,7 +123,8 @@ shell, then displayed in place. Wide layouts can be panned horizontally, and
 transient preview failures retry automatically (or click the error to retry).
 JavaScript and active content are stripped.
 Remote images stay blocked until you click the image button or press `r`,
-avoiding automatic tracking-pixel requests.
+avoiding automatic tracking-pixel requests. The preview also shows a clear
+**Load images** control whenever it detects blocked remote content.
 
 In-panel preview is currently Gmail-only. Rows from the other built-in
 providers keep the original open-in-browser behavior.

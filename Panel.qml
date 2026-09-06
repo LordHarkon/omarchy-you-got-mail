@@ -1149,6 +1149,7 @@ Panel {
 
               PanelActionButton {
                 visible: root.detailMessage && root.detailMessage.hasRemoteContent === true
+                enabled: !root.detailBusy
                 iconText: root.iconImages
                 tooltipText: root.remoteContentAllowed
                   ? "Block remote images (r)"
@@ -1187,6 +1188,32 @@ Panel {
           }
 
           PanelSeparator { width: parent.width }
+
+          Rectangle {
+            width: parent.width
+            height: visible ? Style.space(30) : 0
+            visible: root.detailMessage
+                     && root.detailMessage.hasRemoteContent === true
+                     && !root.remoteContentAllowed
+                     && !root.detailBusy
+            radius: Style.cornerRadius
+            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+
+            Text {
+              anchors.centerIn: parent
+              text: "Remote images are blocked · Load images"
+              textFormat: Text.PlainText
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              color: root.foreground
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.toggleRemoteContent()
+            }
+          }
 
           Rectangle {
             id: previewFrame
