@@ -19,6 +19,7 @@ Panel {
 
   moduleName: "bvisagie.you-got-mail"
   ipcTarget: "bvisagie.you-got-mail"
+  manageIpc: false
 
   readonly property string script:
     Qt.resolvedUrl("bin/you-got-mail").toString().replace(/^file:\/\//, "")
@@ -104,7 +105,7 @@ Panel {
     if (!validUrl(url)) return false
     // The bar process is not a login shell; bare xdg-open is silent.
     // omarchy-launch-browser runs the default browser via uwsm.
-    Util.execArgv(["omarchy-launch-browser", url])
+    Quickshell.execDetached(["omarchy-launch-browser", url])
     return true
   }
 
@@ -423,6 +424,26 @@ Panel {
     id: listProc
     stdout: StdioCollector {
       onStreamFinished: root.applyPayload(text)
+    }
+  }
+
+  IpcHandler {
+    target: root.ipcTarget
+
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function refresh(): string { root.refresh(); return "ok" }
+    function previewFirst(): string {
+      root.open()
+      if (root.messages.length === 0) {
+        root.refresh()
+        return "no unread message loaded"
+      }
+      root.previewMessage(root.messages[0])
+      return "ok"
     }
   }
 

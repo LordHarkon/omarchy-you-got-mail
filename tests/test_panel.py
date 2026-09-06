@@ -124,6 +124,12 @@ class PanelContractTests(unittest.TestCase):
         self.assertIn("preview the complete message in the panel; it stays unread", readme)
         self.assertIn("Remote images stay blocked", readme)
 
+    def test_ipc_preview_hook_and_current_browser_launcher(self) -> None:
+        self.assertIn("manageIpc: false", self.qml)
+        self.assertIn("function previewFirst(): string", self.qml)
+        self.assertIn('Quickshell.execDetached(["omarchy-launch-browser", url])', self.qml)
+        self.assertNotIn("Util.execArgv", self.qml)
+
     def test_mailbox_is_stroked_and_contained(self) -> None:
         icon = (ROOT / "MailSlotIcon.qml").read_text(encoding="utf-8")
         self.assertIn("ctx.arc(", icon)
