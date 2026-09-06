@@ -110,12 +110,15 @@ class PanelContractTests(unittest.TestCase):
 
     def test_gmail_preview_is_in_panel_and_unread_safe(self) -> None:
         self.assertNotIn("import QtQuick.Pdf", self.qml)
-        self.assertIn('previewProc.command = [root.script, "preview", message.id]', self.qml)
+        self.assertIn('var argv = [root.script, "preview", root.detailMessage.id]', self.qml)
         self.assertIn("function previewMessage(message)", self.qml)
         self.assertIn("function closeDetail()", self.qml)
         self.assertIn("Flickable", self.qml)
         self.assertIn("previewFrame.fittedImageHeight", self.qml)
         self.assertIn("root.detailMessage.previewHeight", self.qml)
+        self.assertIn("ScrollBar.horizontal", self.qml)
+        self.assertIn("function retryDetail()", self.qml)
+        self.assertIn("previewRetriesRemaining", self.qml)
         self.assertNotIn("PdfDocument", self.qml)
         self.assertNotIn("WebEngineView", self.qml)
         self.assertIn('argv.push("--remote")', self.qml)

@@ -19,6 +19,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 from email import policy
 from email.message import EmailMessage, Message
 from email.parser import BytesParser
@@ -45,7 +46,6 @@ BLOCKED_TAGS = {
     "option",
     "script",
     "select",
-    "source",
     "textarea",
     "video",
 }
@@ -65,14 +65,21 @@ BLOCKED_CONTAINER_TAGS = {
     "video",
 }
 UNWRAPPED_TAGS = {"body", "head", "html", "title"}
-VOID_TAGS = {"area", "br", "col", "hr", "img", "param", "track", "wbr"}
+VOID_TAGS = {"area", "br", "col", "hr", "img", "param", "source", "track", "wbr"}
 URL_ATTRS = {"action", "background", "formaction", "href", "poster", "src", "srcset", "xlink:href"}
 REMOTE_FETCH_ATTRS = {"background", "poster", "src", "srcset", "xlink:href"}
 SAFE_DATA_IMAGE = re.compile(r"^data:image/(?:gif|jpe?g|png|webp);base64,", re.I)
 REMOTE_CONTENT = re.compile(
-    r"(?:src|srcset|background|poster)\s*=\s*['\"]?[^'\"]*https?://|url\(\s*['\"]?\s*https?://",
+    r"(?:src|srcset|background|poster)\s*=\s*['\"]?[^'\"]*(?:https?:)?//"
+    r"|url\(\s*['\"]?\s*(?:https?:)?//",
     re.I,
 )
+
+BASELINE_WIDTH = 720
+INITIAL_CAPTURE_WIDTH = BASELINE_WIDTH * 2
+MAX_CAPTURE_WIDTH = BASELINE_WIDTH * 3
+CAPTURE_HEIGHT = 20000
+RENDER_ATTEMPTS = 3
 
 
 def _decode_base64url(raw: str) -> bytes:
@@ -131,6 +138,13 @@ def _safe_url(value: str) -> bool:
     return True
 
 
+def _is_remote_url(value: str) -> bool:
+    compact = re.sub(r"[\x00-\x20]+", "", html.unescape(value)).lower()
+    return compact.startswith(("http://", "https://", "//")) or bool(
+        re.search(r"(?:^|[\s,(])(?:https?:)?//", compact)
+    )
+
+
 class MailHtmlSanitizer(HTMLParser):
     def __init__(self, *, allow_remote: bool = False) -> None:
         super().__init__(convert_charrefs=False)
@@ -152,10 +166,14 @@ class MailHtmlSanitizer(HTMLParser):
             value = value or ""
             if name.startswith("on") or name in {"contenteditable", "srcdoc", "target"}:
                 continue
+            if tag == "img" and name in {"decoding", "loading"}:
+                # The preview is captured once, so lazy/async image hints can
+                # leave permanent blanks in the inert result.
+                continue
             if (
                 not self.allow_remote
                 and (name in REMOTE_FETCH_ATTRS or (name == "href" and tag in {"image", "use"}))
-                and re.search(r"https?://", value, re.I)
+                and _is_remote_url(value)
             ):
                 continue
             if name in URL_ATTRS and not _safe_url(value):
@@ -200,8 +218,12 @@ class MailHtmlSanitizer(HTMLParser):
 
 def sanitize(source: str, *, allow_remote: bool = False) -> str:
     if not allow_remote:
-        source = re.sub(r"url\(\s*(['\"]?)https?://.*?\1\s*\)", "none", source, flags=re.I)
-        source = re.sub(r"@import\s+(?:url\()?\s*['\"]?https?://.*?;", "", source, flags=re.I)
+        source = re.sub(
+            r"url\(\s*(['\"]?)(?:https?:)?//.*?\1\s*\)", "none", source, flags=re.I
+        )
+        source = re.sub(
+            r"@import\s+(?:url\()?\s*['\"]?(?:https?:)?//.*?;", "", source, flags=re.I
+        )
     parser = MailHtmlSanitizer(allow_remote=allow_remote)
     parser.feed(source)
     parser.close()
@@ -253,7 +275,7 @@ def render_payload(payload: dict, destination: Path, *, allow_remote: bool = Fal
   :root { color-scheme: light; }
   html, body { margin: 0; padding: 0; background: #fff; color: #161616; }
   body { font: 15px/1.48 system-ui, sans-serif; overflow-wrap: anywhere; }
-  .mail-document { padding: 18px 20px 28px; box-sizing: border-box; }
+  .mail-document { width: 720px; padding: 18px 20px 28px; box-sizing: border-box; }
   .plain { white-space: pre-wrap; font: 14px/1.55 ui-monospace, monospace; }
   img { max-width: 100%; height: auto; }
   table { max-width: 100%; }
@@ -284,7 +306,115 @@ def png_dimensions(path: Path) -> tuple[int, int]:
     return width, height
 
 
-def render_image(source: Path, destination: Path) -> tuple[int, int]:
+def _image_bounds(magick: str, path: Path) -> tuple[int, int, int, int]:
+    bounds = subprocess.run(
+        [magick, str(path), "-fuzz", "2%", "-format", "%@", "info:"],
+        check=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=15,
+    ).stdout.strip()
+    match = re.fullmatch(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", bounds)
+    if not match:
+        raise ValueError("could not measure the rendered message")
+    return tuple(int(value) for value in match.groups())
+
+
+def _render_image_once(
+    source: Path,
+    destination: Path,
+    *,
+    browser: str,
+    magick: str,
+    allow_remote: bool,
+    attempt_dir: Path,
+) -> tuple[int, int]:
+    capture_width = INITIAL_CAPTURE_WIDTH
+    while True:
+        raw = attempt_dir / f"message-{capture_width}.png"
+        profile = attempt_dir / f"profile-{capture_width}"
+        command = [
+            browser,
+            "--headless=new",
+            "--disable-gpu",
+            "--disable-extensions",
+            "--disable-javascript",
+            "--disable-default-apps",
+            "--disable-sync",
+            "--metrics-recording-only",
+            "--no-first-run",
+            "--hide-scrollbars",
+            "--run-all-compositor-stages-before-draw",
+            f"--user-data-dir={profile}",
+            f"--window-size={capture_width},{CAPTURE_HEIGHT}",
+            f"--screenshot={raw}",
+        ]
+        if allow_remote:
+            command.extend(
+                ["--disable-cache", "--disk-cache-size=1", "--virtual-time-budget=10000"]
+            )
+        else:
+            command.append("--disable-background-networking")
+        command.append(source.resolve().as_uri())
+        subprocess.run(
+            command,
+            check=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=45,
+        )
+        if not raw.is_file() or raw.stat().st_size == 0:
+            raise ValueError("message renderer produced no preview")
+
+        content_width, content_height, content_x, content_y = _image_bounds(magick, raw)
+        content_right = max(0, content_x) + content_width
+        if content_width > 0 and content_right >= capture_width - 2 and capture_width < MAX_CAPTURE_WIDTH:
+            capture_width = MAX_CAPTURE_WIDTH
+            continue
+        break
+
+    margin = 16
+    if content_height == 0:
+        crop_y = 0
+        crop_height = 80
+        crop_width = BASELINE_WIDTH
+    else:
+        crop_y = max(0, content_y - margin)
+        crop_bottom = min(CAPTURE_HEIGHT, content_y + content_height + margin)
+        crop_height = max(80, crop_bottom - crop_y)
+        crop_width = min(capture_width, max(BASELINE_WIDTH, content_right + margin))
+
+    output = attempt_dir / "message.png"
+    subprocess.run(
+        [
+            magick,
+            str(raw),
+            "-crop",
+            f"{crop_width}x{crop_height}+0+{crop_y}",
+            "+repage",
+            str(output),
+        ],
+        check=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+    )
+    if not output.is_file() or output.stat().st_size == 0:
+        raise ValueError("message renderer produced no preview")
+    dimensions = png_dimensions(output)
+    os.chmod(output, 0o600)
+    os.replace(output, destination)
+    os.chmod(destination, 0o600)
+    return dimensions
+
+
+def render_image(
+    source: Path, destination: Path, *, allow_remote: bool = False
+) -> tuple[int, int]:
     browser = shutil.which("chromium") or shutil.which("brave") or shutil.which("brave-browser")
     if not browser:
         raise ValueError("Chromium or Brave is required for full message previews")
@@ -292,96 +422,26 @@ def render_image(source: Path, destination: Path) -> tuple[int, int]:
     if not magick:
         raise ValueError("ImageMagick is required for fitted message previews")
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    last_error: Exception | None = None
     with tempfile.TemporaryDirectory(prefix="render-", dir=destination.parent) as tmp:
         tmpdir = Path(tmp)
-        raw = tmpdir / "message-full.png"
-        output = tmpdir / "message.png"
-        profile = tmpdir / "profile"
-        viewport_width = 720
-        viewport_height = 20000
-        command = [
-            browser,
-            "--headless=new",
-            "--disable-gpu",
-            "--disable-extensions",
-            "--disable-javascript",
-            "--disable-background-networking",
-            "--disable-default-apps",
-            "--disable-sync",
-            "--metrics-recording-only",
-            "--no-first-run",
-            "--hide-scrollbars",
-            "--run-all-compositor-stages-before-draw",
-            "--virtual-time-budget=3000",
-            f"--user-data-dir={profile}",
-            f"--window-size={viewport_width},{viewport_height}",
-            f"--screenshot={raw}",
-            source.resolve().as_uri(),
-        ]
-        try:
-            subprocess.run(
-                command,
-                check=True,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=30,
-            )
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            raise ValueError("could not render the message preview") from exc
-        if not raw.is_file() or raw.stat().st_size == 0:
-            raise ValueError("message renderer produced no preview")
-
-        # Keep the browser's full width so newsletter layouts retain their
-        # intended scale. Only remove blank space above and below the visible
-        # message, with a small breathing margin at either end.
-        try:
-            bounds = subprocess.run(
-                [magick, str(raw), "-fuzz", "2%", "-format", "%@", "info:"],
-                check=True,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                timeout=15,
-            ).stdout.strip()
-            match = re.fullmatch(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", bounds)
-            if not match:
-                raise ValueError("could not measure the rendered message")
-            content_height = int(match.group(2))
-            content_y = max(0, int(match.group(4)))
-            margin = 16
-            if content_height == 0:
-                crop_y = 0
-                crop_height = 80
-            else:
-                crop_y = max(0, content_y - margin)
-                crop_bottom = min(viewport_height, content_y + content_height + margin)
-                crop_height = max(80, crop_bottom - crop_y)
-            subprocess.run(
-                [
-                    magick,
-                    str(raw),
-                    "-crop",
-                    f"{viewport_width}x{crop_height}+0+{crop_y}",
-                    "+repage",
-                    str(output),
-                ],
-                check=True,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=30,
-            )
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            raise ValueError("could not fit the message preview") from exc
-        if not output.is_file() or output.stat().st_size == 0:
-            raise ValueError("message renderer produced no preview")
-        dimensions = png_dimensions(output)
-        os.chmod(output, 0o600)
-        os.replace(output, destination)
-        os.chmod(destination, 0o600)
-        return dimensions
+        for attempt in range(RENDER_ATTEMPTS):
+            attempt_dir = tmpdir / str(attempt)
+            attempt_dir.mkdir(mode=0o700)
+            try:
+                return _render_image_once(
+                    source,
+                    destination,
+                    browser=browser,
+                    magick=magick,
+                    allow_remote=allow_remote,
+                    attempt_dir=attempt_dir,
+                )
+            except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError) as exc:
+                last_error = exc
+                if attempt + 1 < RENDER_ATTEMPTS:
+                    time.sleep(0.3 * (attempt + 1))
+    raise ValueError("could not render the message preview after 3 attempts") from last_error
 
 
 def main() -> None:
@@ -395,7 +455,7 @@ def main() -> None:
             raise ValueError("Gmail returned an invalid message")
         html_path = args.destination.with_suffix(".html")
         result = render_payload(payload, html_path, allow_remote=args.remote)
-        width, height = render_image(html_path, args.destination)
+        width, height = render_image(html_path, args.destination, allow_remote=args.remote)
         result["contentPath"] = str(args.destination)
         result["contentType"] = "image/png"
         result["previewWidth"] = width

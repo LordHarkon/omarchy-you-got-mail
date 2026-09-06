@@ -58,6 +58,7 @@ Panel {
   property string detailContentUrl: "about:blank"
   property string previewRequestedId: ""
   property bool remoteContentAllowed: false
+  property int previewRetriesRemaining: 0
 
   property string pageToken: ""
   property var pageStack: []
@@ -237,8 +238,41 @@ Panel {
     root.detailContentUrl = "about:blank"
     root.remoteContentAllowed = false
     root.previewRequestedId = message.id
-    previewProc.command = [root.script, "preview", message.id]
+    root.previewRetriesRemaining = 2
+    root.startPreviewRequest()
+  }
+
+  function startPreviewRequest() {
+    if (!root.detailOpen || previewProc.running || !root.detailMessage) return
+    if (!validId(root.detailMessage.id)) return
+    root.detailBusy = true
+    root.detailError = ""
+    root.detailContentUrl = "about:blank"
+    var argv = [root.script, "preview", root.detailMessage.id]
+    if (root.remoteContentAllowed) argv.push("--remote")
+    previewProc.command = argv
     previewProc.running = true
+  }
+
+  function handlePreviewFailure(message) {
+    if (!root.detailOpen) return
+    root.detailContentUrl = "about:blank"
+    if (root.previewRetriesRemaining > 0) {
+      root.previewRetriesRemaining -= 1
+      root.detailBusy = true
+      root.detailError = ""
+      previewRetryTimer.restart()
+      return
+    }
+    root.detailBusy = false
+    root.detailError = message || "could not load message"
+  }
+
+  function retryDetail() {
+    if (!root.detailOpen || previewProc.running || !root.detailMessage) return
+    previewRetryTimer.stop()
+    root.previewRetriesRemaining = 2
+    root.startPreviewRequest()
   }
 
   function closeDetail() {
@@ -249,22 +283,24 @@ Panel {
     root.detailContentUrl = "about:blank"
     root.previewRequestedId = ""
     root.remoteContentAllowed = false
+    root.previewRetriesRemaining = 0
+    previewRetryTimer.stop()
   }
 
   function applyPreviewPayload(text) {
     if (!root.detailOpen) return
-    root.detailBusy = false
     try {
       var data = JSON.parse(text)
       if (data.ok !== true) {
-        root.detailError = data.error || "could not load message"
+        root.handlePreviewFailure(data.error || "could not load message")
         return
       }
       if (data.id !== root.previewRequestedId) return
+      root.detailBusy = false
       root.detailMessage = Object.assign({}, root.detailMessage || {}, data)
       root.detailContentUrl = root.contentFileUrl(data.contentPath)
     } catch (e) {
-      root.detailError = "unexpected output from you-got-mail"
+      root.handlePreviewFailure("unexpected output from you-got-mail")
     }
   }
 
@@ -278,14 +314,10 @@ Panel {
 
   function toggleRemoteContent() {
     if (previewProc.running || !root.detailMessage) return
+    previewRetryTimer.stop()
     root.remoteContentAllowed = !root.remoteContentAllowed
-    root.detailBusy = true
-    root.detailError = ""
-    root.detailContentUrl = "about:blank"
-    var argv = [root.script, "preview", root.detailMessage.id]
-    if (root.remoteContentAllowed) argv.push("--remote")
-    previewProc.command = argv
-    previewProc.running = true
+    root.previewRetriesRemaining = 2
+    root.startPreviewRequest()
   }
 
   function markCursorRead() {
@@ -467,6 +499,13 @@ Panel {
     stdout: StdioCollector {
       onStreamFinished: root.applyPreviewPayload(text)
     }
+  }
+
+  Timer {
+    id: previewRetryTimer
+    interval: 500
+    repeat: false
+    onTriggered: root.startPreviewRequest()
   }
 
   Process {
@@ -1156,11 +1195,16 @@ Panel {
               Style.space(180),
               panel.availableCardHeight - panel.verticalContentInset
                 - detailHeading.implicitHeight - Style.space(62))
-            readonly property real fittedImageHeight: {
+            readonly property real previewScale: width / 720
+            readonly property real renderedImageWidth: {
               var imageWidth = root.detailMessage ? Number(root.detailMessage.previewWidth) : 0
+              if (!(imageWidth > 0)) imageWidth = 720
+              return imageWidth * previewScale
+            }
+            readonly property real fittedImageHeight: {
               var imageHeight = root.detailMessage ? Number(root.detailMessage.previewHeight) : 0
-              if (!(imageWidth > 0) || !(imageHeight > 0)) return Style.space(180)
-              return width * imageHeight / imageWidth
+              if (!(imageHeight > 0)) return Style.space(180)
+              return imageHeight * previewScale
             }
             height: Math.min(heightCap, Math.max(Style.space(80), fittedImageHeight))
             radius: Style.cornerRadius
@@ -1180,21 +1224,42 @@ Panel {
                   anchors.fill: parent
                   clip: true
                   boundsBehavior: Flickable.StopAtBounds
-                  flickableDirection: Flickable.VerticalFlick
-                  contentWidth: width
+                  flickableDirection: Flickable.AutoFlickDirection
+                  contentWidth: previewImage.width
                   contentHeight: previewImage.height
-                  interactive: contentHeight > height
+                  interactive: contentWidth > width || contentHeight > height
+                  ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
                   ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
                   Image {
                     id: previewImage
-                    width: previewFlickable.width
+                    property int loadRetries: 0
+                    property string requestedSource: root.detailContentUrl
+
+                    width: previewFrame.renderedImageWidth
                     height: previewFrame.fittedImageHeight
-                    source: root.detailContentUrl
+                    source: requestedSource
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: false
                     smooth: true
+                    onStatusChanged: {
+                      if (status !== Image.Error) return
+                      if (loadRetries < 2) {
+                        loadRetries += 1
+                        imageRetryTimer.restart()
+                      } else {
+                        root.handlePreviewFailure("could not display message")
+                      }
+                    }
+
+                    Timer {
+                      id: imageRetryTimer
+                      interval: 200
+                      repeat: false
+                      onTriggered: previewImage.requestedSource = root.detailContentUrl
+                        + "&imageRetry=" + previewImage.loadRetries
+                    }
                   }
                 }
               }
@@ -1204,13 +1269,22 @@ Panel {
               anchors.centerIn: parent
               width: parent.width - Style.space(40)
               visible: root.detailBusy || root.detailError !== ""
-              text: root.detailBusy ? "Loading the full message…" : root.detailError
+              text: root.detailBusy
+                ? (root.previewRetriesRemaining < 2 ? "Retrying the full message…" : "Loading the full message…")
+                : root.detailError + "\nClick to retry."
               textFormat: Text.PlainText
               horizontalAlignment: Text.AlignHCenter
               wrapMode: Text.WordWrap
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               color: root.detailError !== "" ? "#a51d2d" : "#444444"
+
+              MouseArea {
+                anchors.fill: parent
+                enabled: root.detailError !== "" && !root.detailBusy
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: root.retryDetail()
+              }
             }
           }
         }

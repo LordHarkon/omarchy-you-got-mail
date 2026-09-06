@@ -6,8 +6,10 @@ import tempfile
 import unittest
 from email.message import EmailMessage
 from pathlib import Path
+from unittest import mock
 
-from gmail_preview import png_dimensions, render_payload, sanitize
+import gmail_preview
+from gmail_preview import png_dimensions, render_image, render_payload, sanitize
 
 
 def gmail_payload(message: EmailMessage, *, unread: bool = True) -> dict:
@@ -96,12 +98,33 @@ class GmailPreviewTests(unittest.TestCase):
         self.assertEqual(cleaned, "<p>still visible</p>")
 
     def test_remote_resources_require_explicit_opt_in(self) -> None:
-        source = '<img src="https://images.example.test/a.png"><a href="https://example.test">link</a>'
+        source = (
+            '<picture><source srcset="//images.example.test/a.webp">'
+            '<img loading="lazy" decoding="async" src="https://images.example.test/a.png"></picture>'
+            '<a href="https://example.test">link</a>'
+        )
         blocked = sanitize(source)
         allowed = sanitize(source, allow_remote=True)
         self.assertNotIn("images.example.test", blocked)
         self.assertIn("href=\"https://example.test\"", blocked)
         self.assertIn("images.example.test", allowed)
+        self.assertIn("<source", allowed)
+        self.assertNotIn("loading=", allowed)
+        self.assertNotIn("decoding=", allowed)
+
+    def test_renderer_retries_transient_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            gmail_preview.shutil, "which", side_effect=["/browser", "/magick"]
+        ), mock.patch.object(
+            gmail_preview,
+            "_render_image_once",
+            side_effect=[ValueError("transient"), (720, 413)],
+        ) as render_once, mock.patch.object(gmail_preview.time, "sleep") as sleep:
+            dimensions = render_image(Path(tmp) / "mail.html", Path(tmp) / "mail.png")
+
+        self.assertEqual(dimensions, (720, 413))
+        self.assertEqual(render_once.call_count, 2)
+        sleep.assert_called_once()
 
 
 if __name__ == "__main__":

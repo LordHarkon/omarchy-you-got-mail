@@ -119,7 +119,9 @@ If you never add an account, a single Gmail account is assumed. The first
 Inside a Gmail preview, `Esc` or `b` morphs back to the unread pile, `a`
 marks only that message read, and `o` opens it in Gmail. HTML mail, plain
 text, tables, and inline images are rendered to an inert document outside the
-shell, then displayed in place. JavaScript and active content are stripped.
+shell, then displayed in place. Wide layouts can be panned horizontally, and
+transient preview failures retry automatically (or click the error to retry).
+JavaScript and active content are stripped.
 Remote images stay blocked until you click the image button or press `r`,
 avoiding automatic tracking-pixel requests.
 

@@ -2,6 +2,15 @@
 
 Versions match `manifest.json`. Git tags are created at release time.
 
+## 2.7.2
+
+- Wide Gmail layouts are captured beyond the normal 720-pixel canvas and can
+  be panned horizontally without shrinking or clipping their content.
+- Preview rendering retries transient browser failures up to three times. The
+  panel also retries failed requests/image decodes and offers click-to-retry.
+- Opted-in remote images load eagerly, including `<picture>/<source>` and
+  protocol-relative image URLs, before the inert preview is captured.
+
 ## 2.7.1
 
 - Gmail previews are cropped to the message's visible height instead of being
