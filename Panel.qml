@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Controls
-import QtWebEngine
+import QtQuick.Pdf
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -59,7 +59,6 @@ Panel {
   property string detailContentUrl: "about:blank"
   property string previewRequestedId: ""
   property bool remoteContentAllowed: false
-  property int detailReloadSerial: 0
 
   property string pageToken: ""
   property var pageStack: []
@@ -238,7 +237,6 @@ Panel {
     root.detailError = ""
     root.detailContentUrl = "about:blank"
     root.remoteContentAllowed = false
-    root.detailReloadSerial = 0
     root.previewRequestedId = message.id
     previewProc.command = [root.script, "preview", message.id]
     previewProc.running = true
@@ -252,7 +250,6 @@ Panel {
     root.detailContentUrl = "about:blank"
     root.previewRequestedId = ""
     root.remoteContentAllowed = false
-    root.detailReloadSerial = 0
   }
 
   function applyPreviewPayload(text) {
@@ -281,8 +278,15 @@ Panel {
   }
 
   function toggleRemoteContent() {
+    if (previewProc.running || !root.detailMessage) return
     root.remoteContentAllowed = !root.remoteContentAllowed
-    root.detailReloadSerial += 1
+    root.detailBusy = true
+    root.detailError = ""
+    root.detailContentUrl = "about:blank"
+    var argv = [root.script, "preview", root.detailMessage.id]
+    if (root.remoteContentAllowed) argv.push("--remote")
+    previewProc.command = argv
+    previewProc.running = true
   }
 
   function markCursorRead() {
@@ -1164,31 +1168,25 @@ Panel {
                       && root.detailContentUrl !== "about:blank"
 
               sourceComponent: Component {
-                WebEngineView {
-                  url: root.detailContentUrl + "&reload=" + root.detailReloadSerial
-                  backgroundColor: "#ffffff"
-                  audioMuted: true
-                  activeFocusOnPress: false
-                  settings.autoLoadImages: true
-                  settings.javascriptEnabled: false
-                  settings.javascriptCanOpenWindows: false
-                  settings.javascriptCanAccessClipboard: false
-                  settings.localStorageEnabled: false
-                  settings.localContentCanAccessRemoteUrls: root.remoteContentAllowed
-                  settings.localContentCanAccessFileUrls: false
-                  settings.hyperlinkAuditingEnabled: false
-                  settings.pluginsEnabled: false
-                  settings.fullScreenSupportEnabled: false
-                  settings.screenCaptureEnabled: false
-                  settings.webGLEnabled: false
-                  settings.accelerated2dCanvasEnabled: false
-                  settings.playbackRequiresUserGesture: true
+                Item {
+                  PdfDocument {
+                    id: previewDocument
+                    source: root.detailContentUrl
+                  }
 
-                  onNavigationRequested: function(request) {
-                    if (request.navigationType === WebEngineNavigationRequest.LinkClickedNavigation) {
-                      request.reject()
-                      root.openBrowser(String(request.url))
+                  PdfMultiPageView {
+                    id: pdfView
+                    anchors.fill: parent
+                    clip: true
+                    document: previewDocument
+
+                    function fitWidth() {
+                      if (width > 0 && height > 0)
+                        scaleToWidth(width - Style.space(12), height)
                     }
+
+                    Component.onCompleted: Qt.callLater(fitWidth)
+                    onWidthChanged: Qt.callLater(fitWidth)
                   }
                 }
               }

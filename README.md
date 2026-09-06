@@ -27,7 +27,8 @@ Sample mail only — not a real inbox.
 
 - [Omarchy](https://omarchy.org/) 4.0 or later (plugin `schemaVersion` 1)
 - `python3` (and `jq` for the Gmail provider)
-- Qt WebEngine (included with Omarchy) for full HTML message previews
+- Chromium or Brave for isolated HTML-to-PDF rendering, plus Qt PDF (included
+  with Omarchy) for the in-panel document view
 - **Gmail:** [Google Workspace CLI][gws] — `gws auth setup` (or a Desktop
   OAuth client JSON), then
   `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file gws auth login -s gmail`.
@@ -118,9 +119,10 @@ If you never add an account, a single Gmail account is assumed. The first
 
 Inside a Gmail preview, `Esc` or `b` morphs back to the unread pile, `a`
 marks only that message read, and `o` opens it in Gmail. HTML mail, plain
-text, tables, and inline images are rendered in place. JavaScript and active
-content are stripped. Remote images stay blocked until you click the image
-button or press `r`, avoiding automatic tracking-pixel requests.
+text, tables, and inline images are rendered to an inert document outside the
+shell, then displayed in place. JavaScript and active content are stripped.
+Remote images stay blocked until you click the image button or press `r`,
+avoiding automatic tracking-pixel requests.
 
 In-panel preview is currently Gmail-only. Rows from the other built-in
 providers keep the original open-in-browser behavior.

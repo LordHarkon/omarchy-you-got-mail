@@ -169,7 +169,7 @@ def cmd_read(opaque: str) -> None:
     emit({"ok": True})
 
 
-def cmd_preview(opaque: str) -> None:
+def cmd_preview(opaque: str, *, remote: bool = False) -> None:
     account_id, local_id = decode_id(opaque)
     accounts = {a["id"]: a for a in load_accounts()}
     acc = accounts.get(account_id)
@@ -177,7 +177,10 @@ def cmd_preview(opaque: str) -> None:
         die("unknown account")
     if acc.get("provider") != "gmail":
         die("in-panel preview is currently available for Gmail")
-    payload = _run_provider(acc, ["preview", local_id], timeout=PREVIEW_TIMEOUT)
+    args = ["preview", local_id]
+    if remote:
+        args.append("--remote")
+    payload = _run_provider(acc, args, timeout=PREVIEW_TIMEOUT)
     if not payload.get("ok"):
         die(str(payload.get("error") or "could not load message"))
     payload["id"] = opaque

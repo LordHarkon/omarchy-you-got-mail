@@ -35,7 +35,7 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-you-got-mail/${ACCOUNT_ID}"
 CACHE_FILE="$CACHE_DIR/messages.json"
 PROFILE_FILE="$CACHE_DIR/profile.json"
 LABEL_FILE="$CACHE_DIR/labels.json"
-PREVIEW_FILE="$CACHE_DIR/preview.html"
+PREVIEW_FILE="$CACHE_DIR/preview.pdf"
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 die() {
@@ -360,7 +360,9 @@ cmd_read() {
 
 cmd_preview() {
   local id="${1:-}" payload rendered email thread url err
+  local render_args=("$PREVIEW_FILE")
   valid_id "$id" || die "not a message id"
+  [ "${2:-}" = "--remote" ] && render_args+=("--remote")
 
   # Gmail messages.get is read-only: unlike messages.modify below, fetching
   # format=raw does not remove the UNREAD label.
@@ -372,7 +374,7 @@ cmd_preview() {
     gmail_error "${err:-could not load message}"
   fi
 
-  rendered="$(printf '%s' "$payload" | python3 "$PLUGIN_ROOT/lib/gmail_preview.py" "$PREVIEW_FILE")"
+  rendered="$(printf '%s' "$payload" | python3 "$PLUGIN_ROOT/lib/gmail_preview.py" "${render_args[@]}")"
   if ! printf '%s' "$rendered" | jq -e 'type == "object" and .ok == true' >/dev/null 2>&1; then
     err="$(printf '%s' "$rendered" | jq -r '.error // "could not render message"' 2>/dev/null)"
     die "${err:-could not render message}"
@@ -433,7 +435,7 @@ cmd_read_all() {
 
 case "${1:-list}" in
   list) shift; cmd_list "$@" ;;
-  preview) cmd_preview "${2:-}" ;;
+  preview) shift; cmd_preview "$@" ;;
   read) cmd_read "${2:-}" ;;
   read-all) cmd_read_all ;;
   *)    die "unknown command" ;;

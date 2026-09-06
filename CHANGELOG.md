@@ -9,9 +9,9 @@ state.
 
 - Clicking a Gmail row fetches the RFC 822 message with the read-only Gmail
   `messages.get` endpoint and morphs the panel into a larger detail view.
-- HTML, plain text, tables, and inline CID images render through a locked-down
-  Qt WebEngine view. Scripts and active content are stripped; remote resources
-  are opt-in.
+- HTML, plain text, tables, and inline CID images are rendered by a sandboxed
+  headless Chromium/Brave process into an inert PDF that Qt displays in the
+  panel. Scripts and active content are stripped; remote resources are opt-in.
 - Back, mark-read, open-in-Gmail, and load-images actions have mouse and
   keyboard controls. Other providers retain their browser behavior.
 - `you-got-mail preview <id>` exposes the same unread-safe provider contract.

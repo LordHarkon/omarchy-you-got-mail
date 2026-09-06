@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Turn a Gmail API ``format=raw`` response into a safe local preview.
 
-The resulting HTML is rendered by a JavaScript-disabled WebEngineView.  This
-module still strips active content and dangerous URL schemes so a mail body is
-just a document, never code running in the shell process.
+Active content is stripped, then a sandboxed headless browser outside the shell
+renders the document to PDF. Quickshell only displays that inert PDF.
 """
 
 from __future__ import annotations
@@ -12,8 +11,12 @@ import argparse
 import base64
 import html
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from email import policy
 from email.message import EmailMessage, Message
 from email.parser import BytesParser
@@ -61,7 +64,8 @@ BLOCKED_CONTAINER_TAGS = {
 }
 UNWRAPPED_TAGS = {"body", "head", "html", "title"}
 VOID_TAGS = {"area", "br", "col", "hr", "img", "param", "track", "wbr"}
-URL_ATTRS = {"action", "background", "formaction", "href", "poster", "src", "xlink:href"}
+URL_ATTRS = {"action", "background", "formaction", "href", "poster", "src", "srcset", "xlink:href"}
+REMOTE_FETCH_ATTRS = {"background", "poster", "src", "srcset", "xlink:href"}
 SAFE_DATA_IMAGE = re.compile(r"^data:image/(?:gif|jpe?g|png|webp);base64,", re.I)
 REMOTE_CONTENT = re.compile(
     r"(?:src|srcset|background|poster)\s*=\s*['\"]?[^'\"]*https?://|url\(\s*['\"]?\s*https?://",
@@ -126,10 +130,11 @@ def _safe_url(value: str) -> bool:
 
 
 class MailHtmlSanitizer(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, *, allow_remote: bool = False) -> None:
         super().__init__(convert_charrefs=False)
         self.output: list[str] = []
         self.blocked_depth = 0
+        self.allow_remote = allow_remote
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
@@ -144,6 +149,12 @@ class MailHtmlSanitizer(HTMLParser):
             name = name.lower()
             value = value or ""
             if name.startswith("on") or name in {"contenteditable", "srcdoc", "target"}:
+                continue
+            if (
+                not self.allow_remote
+                and (name in REMOTE_FETCH_ATTRS or (name == "href" and tag in {"image", "use"}))
+                and re.search(r"https?://", value, re.I)
+            ):
                 continue
             if name in URL_ATTRS and not _safe_url(value):
                 continue
@@ -185,14 +196,17 @@ class MailHtmlSanitizer(HTMLParser):
         return "".join(self.output)
 
 
-def sanitize(source: str) -> str:
-    parser = MailHtmlSanitizer()
+def sanitize(source: str, *, allow_remote: bool = False) -> str:
+    if not allow_remote:
+        source = re.sub(r"url\(\s*(['\"]?)https?://.*?\1\s*\)", "none", source, flags=re.I)
+        source = re.sub(r"@import\s+(?:url\()?\s*['\"]?https?://.*?;", "", source, flags=re.I)
+    parser = MailHtmlSanitizer(allow_remote=allow_remote)
     parser.feed(source)
     parser.close()
     return parser.html()
 
 
-def _message_body(message: EmailMessage) -> tuple[str, bool]:
+def _message_body(message: EmailMessage, *, allow_remote: bool = False) -> tuple[str, bool]:
     candidate = message.get_body(preferencelist=("html", "plain"))
     if candidate is None:
         candidate = message
@@ -200,7 +214,8 @@ def _message_body(message: EmailMessage) -> tuple[str, bool]:
     body = _text(candidate)
     if is_html:
         body = _replace_cid_urls(body, _inline_images(message))
-        return sanitize(body), bool(REMOTE_CONTENT.search(body))
+        has_remote = bool(REMOTE_CONTENT.search(body))
+        return sanitize(body, allow_remote=allow_remote), has_remote
     escaped = html.escape(body)
     return f'<div class="plain">{escaped}</div>', False
 
@@ -222,14 +237,14 @@ def _attachments(message: Message) -> list[dict[str, object]]:
     return rows[:50]
 
 
-def render_payload(payload: dict, destination: Path) -> dict:
+def render_payload(payload: dict, destination: Path, *, allow_remote: bool = False) -> dict:
     raw = payload.get("raw")
     if not isinstance(raw, str) or not raw:
         raise ValueError("Gmail returned no message body")
     message = BytesParser(policy=policy.default).parsebytes(_decode_base64url(raw))
     if not isinstance(message, EmailMessage):
         raise ValueError("could not parse message body")
-    body, has_remote = _message_body(message)
+    body, has_remote = _message_body(message, allow_remote=allow_remote)
     document = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="color-scheme" content="light">
 <style>
@@ -256,15 +271,63 @@ def render_payload(payload: dict, destination: Path) -> dict:
     }
 
 
+def render_pdf(source: Path, destination: Path) -> None:
+    browser = shutil.which("chromium") or shutil.which("brave") or shutil.which("brave-browser")
+    if not browser:
+        raise ValueError("Chromium or Brave is required for full message previews")
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="render-", dir=destination.parent) as tmp:
+        tmpdir = Path(tmp)
+        output = tmpdir / "message.pdf"
+        profile = tmpdir / "profile"
+        command = [
+            browser,
+            "--headless=new",
+            "--disable-gpu",
+            "--disable-extensions",
+            "--disable-javascript",
+            "--disable-background-networking",
+            "--disable-default-apps",
+            "--disable-sync",
+            "--metrics-recording-only",
+            "--no-first-run",
+            "--no-pdf-header-footer",
+            f"--user-data-dir={profile}",
+            f"--print-to-pdf={output}",
+            source.resolve().as_uri(),
+        ]
+        try:
+            subprocess.run(
+                command,
+                check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise ValueError("could not render the message preview") from exc
+        if not output.is_file() or output.stat().st_size == 0:
+            raise ValueError("message renderer produced no preview")
+        os.chmod(output, 0o600)
+        os.replace(output, destination)
+        os.chmod(destination, 0o600)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("destination", type=Path)
+    parser.add_argument("--remote", action="store_true")
     args = parser.parse_args()
     try:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             raise ValueError("Gmail returned an invalid message")
-        result = render_payload(payload, args.destination)
+        html_path = args.destination.with_suffix(".html")
+        result = render_payload(payload, html_path, allow_remote=args.remote)
+        render_pdf(html_path, args.destination)
+        result["contentPath"] = str(args.destination)
+        result["contentType"] = "application/pdf"
     except Exception as exc:
         result = {"ok": False, "error": one_line(str(exc) or "could not render message")}
     json.dump(result, sys.stdout, ensure_ascii=False)

@@ -109,13 +109,14 @@ class PanelContractTests(unittest.TestCase):
         self.assertIn("mark the message under the cursor as read, without opening it", readme)
 
     def test_gmail_preview_is_in_panel_and_unread_safe(self) -> None:
-        self.assertIn("import QtWebEngine", self.qml)
+        self.assertIn("import QtQuick.Pdf", self.qml)
         self.assertIn('previewProc.command = [root.script, "preview", message.id]', self.qml)
         self.assertIn("function previewMessage(message)", self.qml)
         self.assertIn("function closeDetail()", self.qml)
-        self.assertIn("WebEngineView", self.qml)
-        self.assertIn("settings.javascriptEnabled: false", self.qml)
-        self.assertIn("settings.localContentCanAccessRemoteUrls: root.remoteContentAllowed", self.qml)
+        self.assertIn("PdfDocument", self.qml)
+        self.assertIn("PdfMultiPageView", self.qml)
+        self.assertNotIn("WebEngineView", self.qml)
+        self.assertIn('argv.push("--remote")', self.qml)
         self.assertIn("root.previewMessage(row.modelData)", self.qml)
         preview = self.qml.split("function previewMessage(message)")[1].split("function closeDetail()")[0]
         self.assertNotIn("enqueueRead", preview)

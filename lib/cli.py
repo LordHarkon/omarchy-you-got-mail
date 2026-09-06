@@ -53,7 +53,7 @@ def main() -> None:
     if args[0] == "preview":
         if len(args) < 2:
             die("usage: you-got-mail preview <id>")
-        cmd_preview(args[1])
+        cmd_preview(args[1], remote="--remote" in args[2:])
         return
     if args[0] == "read":
         if len(args) < 2:

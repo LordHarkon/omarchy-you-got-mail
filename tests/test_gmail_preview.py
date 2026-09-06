@@ -49,6 +49,7 @@ class GmailPreviewTests(unittest.TestCase):
         self.assertIn("<table>", document)
         self.assertIn(".hero{color:blue}", document)
         self.assertIn("data:image/png;base64,", document)
+        self.assertNotIn("https://images.example.test", document)
         self.assertNotIn("<script", document)
         self.assertNotIn("<iframe", document)
         self.assertEqual(mode, 0o600)
@@ -81,6 +82,14 @@ class GmailPreviewTests(unittest.TestCase):
     def test_void_meta_does_not_hide_following_body(self) -> None:
         cleaned = sanitize('<meta charset="utf-8"><p>still visible</p>')
         self.assertEqual(cleaned, "<p>still visible</p>")
+
+    def test_remote_resources_require_explicit_opt_in(self) -> None:
+        source = '<img src="https://images.example.test/a.png"><a href="https://example.test">link</a>'
+        blocked = sanitize(source)
+        allowed = sanitize(source, allow_remote=True)
+        self.assertNotIn("images.example.test", blocked)
+        self.assertIn("href=\"https://example.test\"", blocked)
+        self.assertIn("images.example.test", allowed)
 
 
 if __name__ == "__main__":
