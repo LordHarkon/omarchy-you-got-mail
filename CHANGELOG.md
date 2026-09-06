@@ -2,6 +2,11 @@
 
 Versions match `manifest.json`. Git tags are created at release time.
 
+## 2.7.3
+
+- Remote Gmail images now load by default when a message preview opens. The
+  image action or `r` can still block and reload them for the current message.
+
 ## 2.7.2
 
 - Wide Gmail layouts are captured beyond the normal 720-pixel canvas and can

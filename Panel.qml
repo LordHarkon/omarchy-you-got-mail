@@ -57,7 +57,7 @@ Panel {
   property string detailError: ""
   property string detailContentUrl: "about:blank"
   property string previewRequestedId: ""
-  property bool remoteContentAllowed: false
+  property bool remoteContentAllowed: true
   property int previewRetriesRemaining: 0
 
   property string pageToken: ""
@@ -236,7 +236,7 @@ Panel {
     root.detailMessage = Object.assign({}, message)
     root.detailError = ""
     root.detailContentUrl = "about:blank"
-    root.remoteContentAllowed = false
+    root.remoteContentAllowed = true
     root.previewRequestedId = message.id
     root.previewRetriesRemaining = 2
     root.startPreviewRequest()
@@ -282,7 +282,7 @@ Panel {
     root.detailError = ""
     root.detailContentUrl = "about:blank"
     root.previewRequestedId = ""
-    root.remoteContentAllowed = false
+    root.remoteContentAllowed = true
     root.previewRetriesRemaining = 0
     previewRetryTimer.stop()
   }

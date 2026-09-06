@@ -120,6 +120,7 @@ class PanelContractTests(unittest.TestCase):
         self.assertIn("function retryDetail()", self.qml)
         self.assertIn("previewRetriesRemaining", self.qml)
         self.assertIn("Remote images are blocked · Load images", self.qml)
+        self.assertIn("property bool remoteContentAllowed: true", self.qml)
         self.assertNotIn("PdfDocument", self.qml)
         self.assertNotIn("WebEngineView", self.qml)
         self.assertIn('argv.push("--remote")', self.qml)
@@ -129,7 +130,7 @@ class PanelContractTests(unittest.TestCase):
         self.assertNotIn("dismissLocal", preview)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("preview the complete message in the panel; it stays unread", readme)
-        self.assertIn("Remote images stay blocked", readme)
+        self.assertIn("Remote images load when you open the preview", readme)
 
     def test_ipc_preview_hook_and_current_browser_launcher(self) -> None:
         self.assertIn("manageIpc: false", self.qml)
